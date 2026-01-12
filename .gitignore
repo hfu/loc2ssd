@@ -9,6 +9,7 @@ package-lock.json
 *.md
 !README.md
 !EXAMPLE.md
+!TESTING.md
 
 # Temporary files
 /tmp/

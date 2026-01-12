@@ -159,6 +159,10 @@ just fmt
 just check
 ```
 
+## Testing
+
+詳細なテスト手順については、[TESTING.md](TESTING.md)を参照してください。
+
 ## License
 
 See [LICENSE](LICENSE) file for details.
