@@ -1,0 +1,25 @@
+{
+  "name": "loc2ssd",
+  "version": "1.0.0",
+  "description": "Location to Subjective Spatial Description - Generate spatial descriptions from location coordinates using vector tiles",
+  "main": "main.mjs",
+  "type": "module",
+  "scripts": {
+    "start": "node main.mjs"
+  },
+  "keywords": [
+    "spatial",
+    "location",
+    "vector-tiles",
+    "mapbox",
+    "llm",
+    "description"
+  ],
+  "author": "hfu",
+  "license": "ISC",
+  "dependencies": {
+    "@mapbox/tilebelt": "^1.0.2",
+    "@mapbox/vector-tile": "^2.0.3",
+    "pbf": "^4.0.1"
+  }
+}

@@ -1,0 +1,26 @@
+# Deno
+deno.lock
+
+# Node.js
+node_modules/
+package-lock.json
+
+# Output files
+*.md
+!README.md
+
+# Temporary files
+/tmp/
+*.tmp
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

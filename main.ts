@@ -1,0 +1,487 @@
+#!/usr/bin/env -S deno run --allow-net
+
+import tilebelt from "@mapbox/tilebelt";
+import { VectorTile } from "@mapbox/vector-tile";
+import Pbf from "pbf";
+
+// Constants
+const DEFAULT_ZOOM = 14;
+const TILE_BASE_URL = "https://tunnel.optgeo.org/martin/protomaps-basemap";
+const EARTH_RADIUS_M = 6371000; // Earth radius in meters
+
+// 16 compass directions
+const DIRECTIONS_16 = [
+  "N", "NNE", "NE", "ENE",
+  "E", "ESE", "SE", "SSE",
+  "S", "SSW", "SW", "WSW",
+  "W", "WNW", "NW", "NNW"
+];
+
+interface Location {
+  lon: number;
+  lat: number;
+}
+
+interface Feature {
+  type: string;
+  properties: Record<string, any>;
+  geometry: {
+    type: string;
+    coordinates: any;
+  };
+}
+
+interface SpatialFeature {
+  direction: string;
+  distance: number;
+  type: string;
+  properties: Record<string, any>;
+}
+
+interface SpatialDescription {
+  location: Location;
+  zoom: number;
+  features: SpatialFeature[];
+  summary: {
+    byDirection: Record<string, {
+      landuse: Record<string, number>;
+      buildings: number;
+    }>;
+  };
+}
+
+/**
+ * Convert angle in degrees to 16-direction compass label
+ */
+function angleToDirection16(degrees: number): string {
+  // Normalize to 0-360
+  const normalized = ((degrees % 360) + 360) % 360;
+  // Each direction covers 22.5 degrees (360/16)
+  const index = Math.round(normalized / 22.5) % 16;
+  return DIRECTIONS_16[index];
+}
+
+/**
+ * Calculate bearing (angle) from point1 to point2 in degrees
+ */
+function calculateBearing(from: Location, to: Location): number {
+  const lat1 = from.lat * Math.PI / 180;
+  const lat2 = to.lat * Math.PI / 180;
+  const dLon = (to.lon - from.lon) * Math.PI / 180;
+
+  const y = Math.sin(dLon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) -
+            Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+  
+  const bearing = Math.atan2(y, x) * 180 / Math.PI;
+  return (bearing + 360) % 360;
+}
+
+/**
+ * Calculate distance between two locations using Haversine formula
+ */
+function calculateDistance(from: Location, to: Location): number {
+  const lat1 = from.lat * Math.PI / 180;
+  const lat2 = to.lat * Math.PI / 180;
+  const dLat = lat2 - lat1;
+  const dLon = (to.lon - from.lon) * Math.PI / 180;
+
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1) * Math.cos(lat2) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return EARTH_RADIUS_M * c;
+}
+
+/**
+ * Get the center location of a tile
+ */
+function getTileCenter(tile: [number, number, number]): Location {
+  const bbox = tilebelt.tileToBBOX(tile);
+  return {
+    lon: (bbox[0] + bbox[2]) / 2,
+    lat: (bbox[1] + bbox[3]) / 2
+  };
+}
+
+/**
+ * Get 9 tiles around a location (3x3 grid centered on location)
+ */
+function get9Tiles(lon: number, lat: number, zoom: number): [number, number, number][] {
+  const centerTile = tilebelt.pointToTile(lon, lat, zoom);
+  const [x, y, z] = centerTile;
+  
+  const tiles: [number, number, number][] = [];
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      tiles.push([x + dx, y + dy, z]);
+    }
+  }
+  
+  return tiles;
+}
+
+/**
+ * Fetch and parse a vector tile
+ */
+async function fetchVectorTile(tile: [number, number, number]): Promise<VectorTile | null> {
+  const [x, y, z] = tile;
+  const url = `${TILE_BASE_URL}/${z}/${x}/${y}`;
+  
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.error(`Failed to fetch tile ${z}/${x}/${y}: ${response.status}`);
+      return null;
+    }
+    
+    const arrayBuffer = await response.arrayBuffer();
+    const pbf = new Pbf(new Uint8Array(arrayBuffer));
+    return new VectorTile(pbf);
+  } catch (error) {
+    console.error(`Error fetching tile ${z}/${x}/${y}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Extract features from a vector tile layer
+ */
+function extractFeaturesFromLayer(layer: any, currentLocation: Location): SpatialFeature[] {
+  const features: SpatialFeature[] = [];
+  
+  for (let i = 0; i < layer.length; i++) {
+    const feature = layer.feature(i);
+    const geometry = feature.loadGeometry();
+    
+    if (geometry.length === 0) continue;
+    
+    // Calculate approximate center of the feature
+    let sumX = 0, sumY = 0, count = 0;
+    for (const ring of geometry) {
+      for (const point of ring) {
+        sumX += point.x;
+        sumY += point.y;
+        count++;
+      }
+    }
+    
+    if (count === 0) continue;
+    
+    // Convert tile coordinates to lon/lat (approximate)
+    // This is a simplification; for production, proper tile coordinate conversion is needed
+    const centerX = sumX / count;
+    const centerY = sumY / count;
+    
+    // For now, use tile center as approximation
+    // In a full implementation, we'd convert tile pixel coordinates to lon/lat
+    
+    const properties = feature.properties || {};
+    const type = feature.type;
+    
+    features.push({
+      direction: "", // Will be calculated later with proper coordinates
+      distance: 0,    // Will be calculated later with proper coordinates
+      type: type === 1 ? "Point" : type === 2 ? "LineString" : "Polygon",
+      properties
+    });
+  }
+  
+  return features;
+}
+
+/**
+ * Convert tile pixel coordinates to lon/lat
+ */
+function tilePixelToLonLat(
+  tileX: number,
+  tileY: number,
+  zoom: number,
+  pixelX: number,
+  pixelY: number,
+  extent: number = 4096
+): Location {
+  const bbox = tilebelt.tileToBBOX([tileX, tileY, zoom]);
+  const [west, south, east, north] = bbox;
+  
+  const lon = west + (east - west) * (pixelX / extent);
+  const lat = north - (north - south) * (pixelY / extent);
+  
+  return { lon, lat };
+}
+
+/**
+ * Process vector tiles and extract spatial features
+ */
+async function processTiles(
+  tiles: [number, number, number][],
+  currentLocation: Location
+): Promise<SpatialFeature[]> {
+  const allFeatures: SpatialFeature[] = [];
+  
+  for (const tile of tiles) {
+    const vectorTile = await fetchVectorTile(tile);
+    if (!vectorTile) continue;
+    
+    const [tileX, tileY, zoom] = tile;
+    
+    // Process landuse layer
+    if (vectorTile.layers.landuse) {
+      const layer = vectorTile.layers.landuse;
+      for (let i = 0; i < layer.length; i++) {
+        const feature = layer.feature(i);
+        const geometry = feature.loadGeometry();
+        
+        if (geometry.length === 0) continue;
+        
+        // Calculate center of feature
+        let sumX = 0, sumY = 0, count = 0;
+        for (const ring of geometry) {
+          for (const point of ring) {
+            sumX += point.x;
+            sumY += point.y;
+            count++;
+          }
+        }
+        
+        if (count === 0) continue;
+        
+        const centerPixel = { x: sumX / count, y: sumY / count };
+        const featureLocation = tilePixelToLonLat(tileX, tileY, zoom, centerPixel.x, centerPixel.y);
+        
+        const distance = calculateDistance(currentLocation, featureLocation);
+        const bearing = calculateBearing(currentLocation, featureLocation);
+        const direction = angleToDirection16(bearing);
+        
+        allFeatures.push({
+          direction,
+          distance,
+          type: "landuse",
+          properties: feature.properties || {}
+        });
+      }
+    }
+    
+    // Process building layer
+    if (vectorTile.layers.building) {
+      const layer = vectorTile.layers.building;
+      for (let i = 0; i < layer.length; i++) {
+        const feature = layer.feature(i);
+        const geometry = feature.loadGeometry();
+        
+        if (geometry.length === 0) continue;
+        
+        // Calculate center of feature
+        let sumX = 0, sumY = 0, count = 0;
+        for (const ring of geometry) {
+          for (const point of ring) {
+            sumX += point.x;
+            sumY += point.y;
+            count++;
+          }
+        }
+        
+        if (count === 0) continue;
+        
+        const centerPixel = { x: sumX / count, y: sumY / count };
+        const featureLocation = tilePixelToLonLat(tileX, tileY, zoom, centerPixel.x, centerPixel.y);
+        
+        const distance = calculateDistance(currentLocation, featureLocation);
+        const bearing = calculateBearing(currentLocation, featureLocation);
+        const direction = angleToDirection16(bearing);
+        
+        allFeatures.push({
+          direction,
+          distance,
+          type: "building",
+          properties: feature.properties || {}
+        });
+      }
+    }
+  }
+  
+  return allFeatures;
+}
+
+/**
+ * Generate summary by direction
+ */
+function generateSummary(features: SpatialFeature[]): Record<string, any> {
+  const byDirection: Record<string, {
+    landuse: Record<string, number>;
+    buildings: number;
+  }> = {};
+  
+  for (const direction of DIRECTIONS_16) {
+    byDirection[direction] = {
+      landuse: {},
+      buildings: 0
+    };
+  }
+  
+  for (const feature of features) {
+    if (!byDirection[feature.direction]) continue;
+    
+    if (feature.type === "landuse") {
+      const landuseType = feature.properties.landuse || feature.properties.class || "unknown";
+      byDirection[feature.direction].landuse[landuseType] = 
+        (byDirection[feature.direction].landuse[landuseType] || 0) + 1;
+    } else if (feature.type === "building") {
+      byDirection[feature.direction].buildings++;
+    }
+  }
+  
+  return byDirection;
+}
+
+/**
+ * Format distance for display
+ */
+function formatDistance(meters: number): string {
+  if (meters < 1000) {
+    return `${Math.round(meters)}m`;
+  } else {
+    return `${(meters / 1000).toFixed(1)}km`;
+  }
+}
+
+/**
+ * Generate markdown output
+ */
+function generateMarkdown(description: SpatialDescription): string {
+  const lines: string[] = [];
+  
+  lines.push("# Subjective Spatial Description");
+  lines.push("");
+  lines.push(`**Location**: ${description.location.lat.toFixed(6)}, ${description.location.lon.toFixed(6)}`);
+  lines.push(`**Zoom Level**: ${description.zoom}`);
+  lines.push("");
+  
+  // Group features by direction
+  const featuresByDirection: Record<string, SpatialFeature[]> = {};
+  for (const feature of description.features) {
+    if (!featuresByDirection[feature.direction]) {
+      featuresByDirection[feature.direction] = [];
+    }
+    featuresByDirection[feature.direction].push(feature);
+  }
+  
+  // Sort directions
+  const directions = Object.keys(featuresByDirection).sort((a, b) => {
+    return DIRECTIONS_16.indexOf(a) - DIRECTIONS_16.indexOf(b);
+  });
+  
+  lines.push("## Spatial Features by Direction");
+  lines.push("");
+  
+  for (const direction of directions) {
+    const dirFeatures = featuresByDirection[direction];
+    const buildings = dirFeatures.filter(f => f.type === "building");
+    const landuses = dirFeatures.filter(f => f.type === "landuse");
+    
+    if (buildings.length === 0 && landuses.length === 0) continue;
+    
+    // Calculate density in 100m radius
+    const buildingsIn100m = buildings.filter(f => f.distance <= 100).length;
+    
+    // Find closest features
+    const closestFeatures = dirFeatures
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, 3);
+    
+    const parts: string[] = [];
+    
+    // Add landuse info
+    const landuseTypes: Record<string, number> = {};
+    for (const feature of landuses) {
+      const type = feature.properties.landuse || feature.properties.class || "unknown";
+      landuseTypes[type] = (landuseTypes[type] || 0) + 1;
+    }
+    
+    const landuseStr = Object.entries(landuseTypes)
+      .map(([type, count]) => count > 1 ? `${type} (${count})` : type)
+      .join(", ");
+    
+    if (landuseStr) {
+      parts.push(landuseStr);
+    }
+    
+    // Add building density
+    if (buildingsIn100m > 0) {
+      parts.push(`${buildingsIn100m}+ bldgs in 100m`);
+    } else if (buildings.length > 0) {
+      const avgDistance = buildings.reduce((sum, b) => sum + b.distance, 0) / buildings.length;
+      parts.push(`${buildings.length} bldgs ~${formatDistance(avgDistance)}`);
+    }
+    
+    if (parts.length > 0) {
+      const closestDist = closestFeatures.length > 0 ? 
+        formatDistance(closestFeatures[0].distance) : "";
+      lines.push(`**[${direction}]** ${closestDist}: ${parts.join(" | ")}`);
+    }
+  }
+  
+  lines.push("");
+  lines.push("## Summary");
+  lines.push("");
+  lines.push(`- Total features: ${description.features.length}`);
+  lines.push(`- Buildings: ${description.features.filter(f => f.type === "building").length}`);
+  lines.push(`- Landuse features: ${description.features.filter(f => f.type === "landuse").length}`);
+  
+  return lines.join("\n");
+}
+
+/**
+ * Main function
+ */
+async function main() {
+  const args = Deno.args;
+  
+  if (args.length < 2) {
+    console.error("Usage: deno run --allow-net main.ts <longitude> <latitude> [zoom]");
+    console.error("Example: deno run --allow-net main.ts 139.7671 35.6812 14");
+    Deno.exit(1);
+  }
+  
+  const lon = parseFloat(args[0]);
+  const lat = parseFloat(args[1]);
+  const zoom = args.length > 2 ? parseInt(args[2]) : DEFAULT_ZOOM;
+  
+  if (isNaN(lon) || isNaN(lat) || isNaN(zoom)) {
+    console.error("Invalid arguments. Longitude, latitude, and zoom must be numbers.");
+    Deno.exit(1);
+  }
+  
+  const currentLocation: Location = { lon, lat };
+  
+  console.error(`Generating spatial description for location: ${lat}, ${lon} at zoom ${zoom}...`);
+  
+  // Get 9 tiles around the location
+  const tiles = get9Tiles(lon, lat, zoom);
+  console.error(`Fetching ${tiles.length} tiles...`);
+  
+  // Process tiles and extract features
+  const features = await processTiles(tiles, currentLocation);
+  console.error(`Extracted ${features.length} features`);
+  
+  // Generate summary
+  const summary = generateSummary(features);
+  
+  // Create spatial description
+  const description: SpatialDescription = {
+    location: currentLocation,
+    zoom,
+    features,
+    summary: { byDirection: summary }
+  };
+  
+  // Generate and output markdown
+  const markdown = generateMarkdown(description);
+  console.log(markdown);
+}
+
+// Run main function
+if (import.meta.main) {
+  main();
+}
