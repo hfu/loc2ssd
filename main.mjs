@@ -115,6 +115,55 @@ function tilePixelToLonLat(tileX, tileY, zoom, pixelX, pixelY, extent = 4096) {
 }
 
 /**
+ * Extract features from a vector tile layer
+ */
+function processLayerFeatures(
+  layer,
+  tileX,
+  tileY,
+  zoom,
+  currentLocation,
+  featureType
+) {
+  const features = [];
+  
+  for (let i = 0; i < layer.length; i++) {
+    const feature = layer.feature(i);
+    const geometry = feature.loadGeometry();
+    
+    if (geometry.length === 0) continue;
+    
+    // Calculate center of feature
+    let sumX = 0, sumY = 0, count = 0;
+    for (const ring of geometry) {
+      for (const point of ring) {
+        sumX += point.x;
+        sumY += point.y;
+        count++;
+      }
+    }
+    
+    if (count === 0) continue;
+    
+    const centerPixel = { x: sumX / count, y: sumY / count };
+    const featureLocation = tilePixelToLonLat(tileX, tileY, zoom, centerPixel.x, centerPixel.y);
+    
+    const distance = calculateDistance(currentLocation, featureLocation);
+    const bearing = calculateBearing(currentLocation, featureLocation);
+    const direction = angleToDirection16(bearing);
+    
+    features.push({
+      direction,
+      distance,
+      type: featureType,
+      properties: feature.properties || {}
+    });
+  }
+  
+  return features;
+}
+
+/**
  * Process vector tiles and extract spatial features
  */
 async function processTiles(tiles, currentLocation) {
@@ -128,76 +177,28 @@ async function processTiles(tiles, currentLocation) {
     
     // Process landuse layer
     if (vectorTile.layers.landuse) {
-      const layer = vectorTile.layers.landuse;
-      for (let i = 0; i < layer.length; i++) {
-        const feature = layer.feature(i);
-        const geometry = feature.loadGeometry();
-        
-        if (geometry.length === 0) continue;
-        
-        // Calculate center of feature
-        let sumX = 0, sumY = 0, count = 0;
-        for (const ring of geometry) {
-          for (const point of ring) {
-            sumX += point.x;
-            sumY += point.y;
-            count++;
-          }
-        }
-        
-        if (count === 0) continue;
-        
-        const centerPixel = { x: sumX / count, y: sumY / count };
-        const featureLocation = tilePixelToLonLat(tileX, tileY, zoom, centerPixel.x, centerPixel.y);
-        
-        const distance = calculateDistance(currentLocation, featureLocation);
-        const bearing = calculateBearing(currentLocation, featureLocation);
-        const direction = angleToDirection16(bearing);
-        
-        allFeatures.push({
-          direction,
-          distance,
-          type: "landuse",
-          properties: feature.properties || {}
-        });
-      }
+      const features = processLayerFeatures(
+        vectorTile.layers.landuse,
+        tileX,
+        tileY,
+        zoom,
+        currentLocation,
+        "landuse"
+      );
+      allFeatures.push(...features);
     }
     
     // Process building layer
     if (vectorTile.layers.building) {
-      const layer = vectorTile.layers.building;
-      for (let i = 0; i < layer.length; i++) {
-        const feature = layer.feature(i);
-        const geometry = feature.loadGeometry();
-        
-        if (geometry.length === 0) continue;
-        
-        // Calculate center of feature
-        let sumX = 0, sumY = 0, count = 0;
-        for (const ring of geometry) {
-          for (const point of ring) {
-            sumX += point.x;
-            sumY += point.y;
-            count++;
-          }
-        }
-        
-        if (count === 0) continue;
-        
-        const centerPixel = { x: sumX / count, y: sumY / count };
-        const featureLocation = tilePixelToLonLat(tileX, tileY, zoom, centerPixel.x, centerPixel.y);
-        
-        const distance = calculateDistance(currentLocation, featureLocation);
-        const bearing = calculateBearing(currentLocation, featureLocation);
-        const direction = angleToDirection16(bearing);
-        
-        allFeatures.push({
-          direction,
-          distance,
-          type: "building",
-          properties: feature.properties || {}
-        });
-      }
+      const features = processLayerFeatures(
+        vectorTile.layers.building,
+        tileX,
+        tileY,
+        zoom,
+        currentLocation,
+        "building"
+      );
+      allFeatures.push(...features);
     }
   }
   

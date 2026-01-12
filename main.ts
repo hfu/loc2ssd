@@ -148,7 +148,14 @@ async function fetchVectorTile(tile: [number, number, number]): Promise<VectorTi
 /**
  * Extract features from a vector tile layer
  */
-function extractFeaturesFromLayer(layer: any, currentLocation: Location): SpatialFeature[] {
+function processLayerFeatures(
+  layer: any,
+  tileX: number,
+  tileY: number,
+  zoom: number,
+  currentLocation: Location,
+  featureType: string
+): SpatialFeature[] {
   const features: SpatialFeature[] = [];
   
   for (let i = 0; i < layer.length; i++) {
@@ -157,7 +164,7 @@ function extractFeaturesFromLayer(layer: any, currentLocation: Location): Spatia
     
     if (geometry.length === 0) continue;
     
-    // Calculate approximate center of the feature
+    // Calculate center of feature
     let sumX = 0, sumY = 0, count = 0;
     for (const ring of geometry) {
       for (const point of ring) {
@@ -169,22 +176,18 @@ function extractFeaturesFromLayer(layer: any, currentLocation: Location): Spatia
     
     if (count === 0) continue;
     
-    // Convert tile coordinates to lon/lat (approximate)
-    // This is a simplification; for production, proper tile coordinate conversion is needed
-    const centerX = sumX / count;
-    const centerY = sumY / count;
+    const centerPixel = { x: sumX / count, y: sumY / count };
+    const featureLocation = tilePixelToLonLat(tileX, tileY, zoom, centerPixel.x, centerPixel.y);
     
-    // For now, use tile center as approximation
-    // In a full implementation, we'd convert tile pixel coordinates to lon/lat
-    
-    const properties = feature.properties || {};
-    const type = feature.type;
+    const distance = calculateDistance(currentLocation, featureLocation);
+    const bearing = calculateBearing(currentLocation, featureLocation);
+    const direction = angleToDirection16(bearing);
     
     features.push({
-      direction: "", // Will be calculated later with proper coordinates
-      distance: 0,    // Will be calculated later with proper coordinates
-      type: type === 1 ? "Point" : type === 2 ? "LineString" : "Polygon",
-      properties
+      direction,
+      distance,
+      type: featureType,
+      properties: feature.properties || {}
     });
   }
   
@@ -228,76 +231,28 @@ async function processTiles(
     
     // Process landuse layer
     if (vectorTile.layers.landuse) {
-      const layer = vectorTile.layers.landuse;
-      for (let i = 0; i < layer.length; i++) {
-        const feature = layer.feature(i);
-        const geometry = feature.loadGeometry();
-        
-        if (geometry.length === 0) continue;
-        
-        // Calculate center of feature
-        let sumX = 0, sumY = 0, count = 0;
-        for (const ring of geometry) {
-          for (const point of ring) {
-            sumX += point.x;
-            sumY += point.y;
-            count++;
-          }
-        }
-        
-        if (count === 0) continue;
-        
-        const centerPixel = { x: sumX / count, y: sumY / count };
-        const featureLocation = tilePixelToLonLat(tileX, tileY, zoom, centerPixel.x, centerPixel.y);
-        
-        const distance = calculateDistance(currentLocation, featureLocation);
-        const bearing = calculateBearing(currentLocation, featureLocation);
-        const direction = angleToDirection16(bearing);
-        
-        allFeatures.push({
-          direction,
-          distance,
-          type: "landuse",
-          properties: feature.properties || {}
-        });
-      }
+      const features = processLayerFeatures(
+        vectorTile.layers.landuse,
+        tileX,
+        tileY,
+        zoom,
+        currentLocation,
+        "landuse"
+      );
+      allFeatures.push(...features);
     }
     
     // Process building layer
     if (vectorTile.layers.building) {
-      const layer = vectorTile.layers.building;
-      for (let i = 0; i < layer.length; i++) {
-        const feature = layer.feature(i);
-        const geometry = feature.loadGeometry();
-        
-        if (geometry.length === 0) continue;
-        
-        // Calculate center of feature
-        let sumX = 0, sumY = 0, count = 0;
-        for (const ring of geometry) {
-          for (const point of ring) {
-            sumX += point.x;
-            sumY += point.y;
-            count++;
-          }
-        }
-        
-        if (count === 0) continue;
-        
-        const centerPixel = { x: sumX / count, y: sumY / count };
-        const featureLocation = tilePixelToLonLat(tileX, tileY, zoom, centerPixel.x, centerPixel.y);
-        
-        const distance = calculateDistance(currentLocation, featureLocation);
-        const bearing = calculateBearing(currentLocation, featureLocation);
-        const direction = angleToDirection16(bearing);
-        
-        allFeatures.push({
-          direction,
-          distance,
-          type: "building",
-          properties: feature.properties || {}
-        });
-      }
+      const features = processLayerFeatures(
+        vectorTile.layers.building,
+        tileX,
+        tileY,
+        zoom,
+        currentLocation,
+        "building"
+      );
+      allFeatures.push(...features);
     }
   }
   
