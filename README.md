@@ -97,7 +97,7 @@ just check
 
 ## Output Format
 
-プログラムは以下のような形式でMarkdownを出力します：
+プログラムは以下のような形式でMarkdownを出力します（詳細は[EXAMPLE.md](EXAMPLE.md)を参照）：
 
 ```markdown
 # Subjective Spatial Description

@@ -8,6 +8,7 @@ package-lock.json
 # Output files
 *.md
 !README.md
+!EXAMPLE.md
 
 # Temporary files
 /tmp/
