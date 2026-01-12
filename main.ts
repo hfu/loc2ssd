@@ -95,17 +95,6 @@ function calculateDistance(from: Location, to: Location): number {
 }
 
 /**
- * Get the center location of a tile
- */
-function getTileCenter(tile: [number, number, number]): Location {
-  const bbox = tilebelt.tileToBBOX(tile);
-  return {
-    lon: (bbox[0] + bbox[2]) / 2,
-    lat: (bbox[1] + bbox[3]) / 2
-  };
-}
-
-/**
  * Get 9 tiles around a location (3x3 grid centered on location)
  */
 function get9Tiles(lon: number, lat: number, zoom: number): [number, number, number][] {
@@ -140,7 +129,7 @@ async function fetchVectorTile(tile: [number, number, number]): Promise<VectorTi
     const pbf = new Pbf(new Uint8Array(arrayBuffer));
     return new VectorTile(pbf);
   } catch (error) {
-    console.error(`Error fetching tile ${z}/${x}/${y}:`, error);
+    console.error(`Error fetching tile ${z}/${x}/${y}:`, error instanceof Error ? error.message : error);
     return null;
   }
 }
