@@ -52,7 +52,7 @@ deno run --allow-net main.ts 139.7671 35.6812 14 > tokyo_station.md
 ## 出力フォーマットの説明
 
 - **方位**: 16方位で表現（N, NNE, NE, ENE, E, ESE, SE, SSE, S, SSW, SW, WSW, W, WNW, NW, NNW）
-- **距離**: 最も近い特徴までの距離をメートル単位で表示（1km以上の場合はkm単位）
+- **距離**: 最も近い地物までの距離をメートル単位で表示（1km以上の場合はkm単位）
 - **土地利用**: landuse情報（commercial, residential, park, industrial等）
 - **建物密度**: 100m以内の建物数、または平均距離
 
