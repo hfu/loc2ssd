@@ -1,0 +1,10 @@
+{
+  "tasks": {
+    "run": "deno run --allow-net main.ts"
+  },
+  "imports": {
+    "@mapbox/tilebelt": "npm:@mapbox/tilebelt@^1.0.2",
+    "@mapbox/vector-tile": "npm:@mapbox/vector-tile@^2.0.3",
+    "pbf": "npm:pbf@^4.0.1"
+  }
+}
